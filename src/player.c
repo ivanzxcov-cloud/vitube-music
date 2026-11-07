@@ -676,13 +676,30 @@ static void request_play_locked(int idx, int start_ms) {
 }
 
 static volatile int g_radio = 1;
+static volatile int g_loop = LOOP_OFF;
+
+int player_loop_mode(void) {
+    return g_loop;
+}
+
+int player_loop_cycle(void) {
+    g_loop = (g_loop + 1) % 3;
+    return g_loop;
+}
+
+static int next_index_locked(int idx) {
+    if (g_loop == LOOP_ONE) return idx;
+    if (idx + 1 < P.qn) return idx + 1;
+    if (g_loop == LOOP_ALL && P.qn > 0) return 0;
+    return -1;
+}
 
 void player_set_radio(int on) {
     g_radio = on;
 }
 
 static void maybe_radio(int idx) {
-    if (!g_radio) return;
+    if (!g_radio || g_loop != LOOP_OFF || !store_opt(OPT_RADIO)) return;
     char last[16] = "";
     mx_lock(&P.mx);
     if (P.qn > 0 && P.qn - idx <= 3) str_set(last, sizeof last, P.q[P.qn - 1].id);
@@ -697,9 +714,10 @@ static void wait_and_advance(http_t *h, int idx, sess_t *s, uint32_t gen, resolv
     while (!s->cancel) {
         if (ring_finished(gen)) break;
         mx_lock(&P.mx);
-        int has_next = idx + 1 < P.qn;
+        int nx = next_index_locked(idx);
+        int has_next = nx >= 0 && nx != idx;
         track_t nt;
-        if (has_next) nt = P.q[idx + 1];
+        if (has_next) nt = P.q[nx];
         mx_unlock(&P.mx);
         if (has_next && !tried) {
             tried = 1;
@@ -711,10 +729,10 @@ static void wait_and_advance(http_t *h, int idx, sess_t *s, uint32_t gen, resolv
     }
     for (int w = 0; w < 400 && !s->cancel; w++) {
         mx_lock(&P.mx);
-        int has_next = idx + 1 < P.qn;
-        if (has_next) request_play_locked(idx + 1, 0);
+        int nx = next_index_locked(idx);
+        if (nx >= 0) request_play_locked(nx, 0);
         mx_unlock(&P.mx);
-        if (has_next) return;
+        if (nx >= 0) return;
         sleep_ms(20);
     }
     if (!s->cancel) {
@@ -1018,6 +1036,7 @@ void player_play_index(int idx) {
 void player_next(void) {
     mx_lock(&P.mx);
     int n = P.cur + 1;
+    if (n >= P.qn && g_loop == LOOP_ALL && P.qn > 0) n = 0;
     int ok = n < P.qn;
     if (ok) {
         P.state = PL_LOADING;

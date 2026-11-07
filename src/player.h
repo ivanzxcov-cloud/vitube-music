@@ -39,4 +39,13 @@ int player_duration_ms(void);
 void player_message(char *out, size_t cap);
 void player_set_radio(int on);
 
+enum {
+    LOOP_OFF = 0,
+    LOOP_ALL,
+    LOOP_ONE
+};
+
+int player_loop_mode(void);
+int player_loop_cycle(void);
+
 #endif

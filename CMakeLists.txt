@@ -84,7 +84,7 @@ target_link_libraries(${PROJECT_NAME}
   SceAudio_stub
   SceCommonDialog_stub
   SceIme_stub
-  ScePvf_stub
+  ScePgf_stub
   ScePower_stub
   SceAppMgr_stub
   SceSysmodule_stub
@@ -103,7 +103,7 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   NAME ${VITA_APP_NAME}
   FILE assets/cacert.pem data/cacert.pem
   FILE assets/PSButtons.ttf assets/PSButtons.ttf
-  FILE assets/Logo.png assets/Logo.png
+  FILE assets/Loop.png assets/Loop.png
   FILE assets/Heart.png assets/Heart.png
   FILE assets/Heart_s.png assets/Heart_s.png
   FILE assets/Note.png assets/Note.png

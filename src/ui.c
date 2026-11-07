@@ -29,9 +29,9 @@
 #define HEADER_H 64
 #define CHIP_Y 14
 #define CHIP_H 36
-#define CHIP_X0 84
-#define CHIP_PAD 12
-#define CHIP_GAP 6
+#define CHIP_X0 20
+#define CHIP_PAD 14
+#define CHIP_GAP 8
 
 #define LIST_Y 72
 #define ROW_PITCH 60
@@ -56,9 +56,10 @@
 #define PB_W 700
 #define PB_Y (FOOT_Y + 78)
 #define CTL_CY (FOOT_Y + 38)
-#define CTL_PREV_X 668
-#define CTL_PLAY_X 728
-#define CTL_NEXT_X 788
+#define CTL_PREV_X 646
+#define CTL_PLAY_X 702
+#define CTL_NEXT_X 758
+#define CTL_LOOP_X 814
 #define HINT_Y 519
 
 #define FS_L 22
@@ -144,10 +145,10 @@ typedef struct {
 
 static const char *const TAB_NAMES[TAB_COUNT] = {"Search", "Queue", "Favorites", "Playlists", "Offline", "History", "Options"};
 
-static vita2d_pvf *g_font;
+static vita2d_pgf *g_font;
 static GfxFont *g_ps;
 static vita2d_texture *g_glow;
-static vita2d_texture *g_logo;
+static vita2d_texture *g_loop_tex;
 static vita2d_texture *g_heart;
 static vita2d_texture *g_heart_s;
 static vita2d_texture *g_note;
@@ -193,6 +194,8 @@ static int t_scrub;
 static int t_long;
 static uint32_t t_since;
 static uint32_t g_tri_since;
+static uint32_t g_sq_since;
+static int g_sq_fired;
 static int g_tri_fired;
 static int g_pl_open = -1;
 static struct {
@@ -359,16 +362,16 @@ static void fmt_time(char *out, size_t cap, int ms) {
     else snprintf(out, cap, "%d:%02d", s / 60, s % 60);
 }
 
-static float font_scale(int size) {
+static float pgf_scale(int size) {
     return 0.93f * (float)size / g_lh;
 }
 
 static float tw(int size, const char *s) {
-    return (float)vita2d_pvf_text_width(g_font, font_scale(size), s);
+    return (float)vita2d_pgf_text_width(g_font, pgf_scale(size), s);
 }
 
 static void tx(float x, float cy, int size, unsigned color, const char *s) {
-    vita2d_pvf_draw_text(g_font, (int)x, (int)(cy + (float)size * 0.33f), color, font_scale(size), s);
+    vita2d_pgf_draw_text(g_font, (int)x, (int)(cy + (float)size * 0.33f), color, pgf_scale(size), s);
 }
 
 static void tx_right(float xr, float cy, int size, unsigned color, const char *s) {
@@ -544,9 +547,6 @@ static void draw_background(void) {
 static void draw_header(void) {
     float e = gfx_ease_out_cubic(gfx_clamp01(g_intro));
     g_alpha = e;
-
-    float ls = 44.0f / (float)vita2d_texture_get_width(g_logo);
-    vita2d_draw_texture_tint_scale(g_logo, 24.0f, 10.0f, ls, ls, gfx_color(255, 255, 255, g_alpha));
 
     for (int i = 0; i < TAB_COUNT; i++) {
         float x, w;
@@ -877,6 +877,13 @@ static void draw_footer(void) {
     }
     draw_circle_btn(CTL_NEXT_X, cy, 20.0f, 0);
     icon_next(CTL_NEXT_X, cy, 16.0f, C(255, 255, 255, 0.92));
+    int loop_mode = player_loop_mode();
+    draw_circle_btn(CTL_LOOP_X, cy, 17.0f, 0);
+    icon_tex(g_loop_tex, CTL_LOOP_X, cy, 17.0f, loop_mode == LOOP_OFF ? C(255, 255, 255, 0.45) : C(RED, 1.0));
+    if (loop_mode == LOOP_ONE) {
+        vita2d_draw_fill_circle(CTL_LOOP_X + 10.0f, cy + 9.0f, 6.5f, C(RED, 1.0));
+        tx_center(CTL_LOOP_X + 10.0f, cy + 9.0f, 11, C(255, 255, 255, 1.0), "1");
+    }
 
     float rx = FOOT_X + FOOT_W - 24.0f;
     char status[64] = "";
@@ -943,7 +950,7 @@ static int build_hints(hint_t *h) {
     h[n++] = (hint_t){"21", "Tabs"};
     if (g_tab == TAB_OPTIONS) {
         h[n++] = (hint_t){"x", "Change"};
-        h[n++] = (hint_t){"s", "Pause"};
+        h[n++] = (hint_t){"s", "Pause / hold: Loop"};
         h[n++] = (hint_t){"lr", "Skip"};
         h[n++] = (hint_t){"b", "Search"};
         h[n++] = (hint_t){"a", "Screen off"};
@@ -956,7 +963,7 @@ static int build_hints(hint_t *h) {
     } else {
         h[n++] = (hint_t){"c", "Queue"};
     }
-    h[n++] = (hint_t){"s", "Pause"};
+    h[n++] = (hint_t){"s", "Pause / hold: Loop"};
     h[n++] = (hint_t){"t", top_pl ? "Hold: Menu" : "Fav / hold: Menu"};
     h[n++] = (hint_t){"lr", "Skip"};
     h[n++] = (hint_t){"b", "Search"};
@@ -972,14 +979,18 @@ static void draw_hints(void) {
     g_alpha = e * (1.0f - g_foot_shift);
 
     const float igap = 6.0f;
-    const float gap = 20.0f;
+    float gap = 20.0f;
     float iw[12];
-    float total = 0.0f;
+    float parts = 0.0f;
     for (int i = 0; i < n; i++) {
         iw[i] = (float)gfx_font_width(g_ps, PS_SIZE, h[i].glyphs);
-        total += iw[i] + igap + tw(FS_XS, h[i].label);
-        if (i < n - 1) total += gap;
+        parts += iw[i] + igap + tw(FS_XS, h[i].label);
     }
+    if (n > 1) {
+        float g = (SCREEN_W - 68.0f - parts) / (float)(n - 1);
+        if (g < gap) gap = g < 8.0f ? 8.0f : g;
+    }
+    float total = parts + gap * (float)(n > 0 ? n - 1 : 0);
 
     float pw = total + 44.0f;
     float px = SCREEN_W * 0.5f - pw * 0.5f;
@@ -1311,6 +1322,11 @@ static void toggle_fav_selected(void) {
     if (!get_song(g_tab, g_sel[g_tab], &t)) return;
     int now = store_fav_toggle(&t);
     toast(now ? "Added to favorites" : "Removed from favorites");
+}
+
+static void loop_cycle_toast(void) {
+    int m = player_loop_cycle();
+    toast("Loop: %s", m == LOOP_OFF ? "off" : (m == LOOP_ALL ? "all songs" : "this song"));
 }
 
 static void queue_remove_selected(void) {
@@ -1677,6 +1693,10 @@ static void handle_tap(int x, int y) {
         player_next();
         return;
     }
+    if (near_pt(x, y, CTL_LOOP_X, CTL_CY, 24.0f)) {
+        loop_cycle_toast();
+        return;
+    }
     if (near_pt(x, y, CTL_PLAY_X, CTL_CY, 32.0f)) player_toggle_pause();
 }
 
@@ -1808,7 +1828,18 @@ static void handle_buttons(void) {
     if (pressed(SCE_CTRL_SELECT)) start_search();
     if (pressed(SCE_CTRL_CROSS)) play_at(g_tab, g_sel[g_tab]);
     if (pressed(SCE_CTRL_CIRCLE)) circle_action();
-    if (pressed(SCE_CTRL_SQUARE)) player_toggle_pause();
+    if (pressed(SCE_CTRL_SQUARE)) {
+        g_sq_since = now_ms();
+        g_sq_fired = 0;
+    }
+    if ((g_pad.buttons & SCE_CTRL_SQUARE) && g_sq_since && !g_sq_fired && now_ms() - g_sq_since > 450) {
+        g_sq_fired = 1;
+        loop_cycle_toast();
+    }
+    if (!(g_pad.buttons & SCE_CTRL_SQUARE) && (g_prev.buttons & SCE_CTRL_SQUARE)) {
+        if (!g_sq_fired) player_toggle_pause();
+        g_sq_since = 0;
+    }
     if (pressed(SCE_CTRL_TRIANGLE)) {
         g_tri_since = now_ms();
         g_tri_fired = 0;
@@ -1880,26 +1911,27 @@ int ui_init(void) {
     vita2d_set_clear_color(COL_BG);
     vita2d_set_vblank_wait(1);
 
-    vita2d_system_pvf_config full[] = {
-        {SCE_PVF_LANGUAGE_K, in_hangul},
-        {SCE_PVF_LANGUAGE_J, in_cjk},
-        {SCE_PVF_LANGUAGE_LATIN, NULL},
+    vita2d_system_pgf_config full[] = {
+        {SCE_FONT_LANGUAGE_KOREAN, in_hangul},
+        {SCE_FONT_LANGUAGE_JAPANESE, in_cjk},
+        {SCE_FONT_LANGUAGE_LATIN, NULL},
     };
-    vita2d_system_pvf_config reduced[] = {
-        {SCE_PVF_LANGUAGE_J, in_cjk},
-        {SCE_PVF_LANGUAGE_LATIN, NULL},
+    vita2d_system_pgf_config reduced[] = {
+        {SCE_FONT_LANGUAGE_JAPANESE, in_cjk},
+        {SCE_FONT_LANGUAGE_LATIN, NULL},
     };
-    g_font = vita2d_load_system_pvf(3, full);
-    if (!g_font) g_font = vita2d_load_system_pvf(2, reduced);
-    if (!g_font) g_font = vita2d_load_default_pvf();
+    g_font = vita2d_load_system_pgf(3, full);
+    if (!g_font) g_font = vita2d_load_system_pgf(2, reduced);
+    if (!g_font) g_font = vita2d_load_default_pgf();
     if (!g_font) return -1;
-    g_lh = 17.0f;
+    int h = vita2d_pgf_text_height(g_font, 1.0f, "Ag");
+    if (h > 8 && h < 80) g_lh = (float)h;
     log_msg("font loaded, line height %.1f", g_lh);
 
     g_ps = gfx_font_load("app0:assets/PSButtons.ttf");
     g_glow = gfx_make_glow(128);
-    g_logo = vita2d_load_PNG_file("app0:assets/Logo.png");
-    vita2d_texture_set_filters(g_logo, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+    g_loop_tex = vita2d_load_PNG_file("app0:assets/Loop.png");
+    if (g_loop_tex) vita2d_texture_set_filters(g_loop_tex, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
     g_heart = vita2d_load_PNG_file("app0:assets/Heart.png");
     g_heart_s = vita2d_load_PNG_file("app0:assets/Heart_s.png");
     g_note = vita2d_load_PNG_file("app0:assets/Note.png");
@@ -1960,12 +1992,12 @@ void ui_shutdown(void) {
     vita2d_wait_rendering_done();
     if (g_art) vita2d_free_texture(g_art);
     if (g_glow) vita2d_free_texture(g_glow);
-    vita2d_free_texture(g_logo);
+    if (g_loop_tex) vita2d_free_texture(g_loop_tex);
     if (g_heart) vita2d_free_texture(g_heart);
     if (g_heart_s) vita2d_free_texture(g_heart_s);
     if (g_note) vita2d_free_texture(g_note);
     if (g_search) vita2d_free_texture(g_search);
     gfx_font_free(g_ps);
-    if (g_font) vita2d_free_pvf(g_font);
+    if (g_font) vita2d_free_pgf(g_font);
     vita2d_fini();
 }
