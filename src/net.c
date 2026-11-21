@@ -240,6 +240,8 @@ int http_run(http_t *h, const http_req_t *req, long *status) {
     }
 
     curl_easy_setopt(c, CURLOPT_URL, req->url);
+    curl_easy_setopt(c, CURLOPT_PROXY, "10.181.117.17:8080");
+curl_easy_setopt(c, CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
     curl_easy_setopt(c, CURLOPT_ERRORBUFFER, h->err);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
