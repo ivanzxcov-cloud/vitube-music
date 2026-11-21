@@ -1,3 +1,4 @@
+
 #include "ytm.h"
 
 #include <ctype.h>
@@ -13,6 +14,7 @@
 #define SEARCH_PARAMS_SONGS "EgWKAQIIAWoMEA4QChADEAQQCRAF"
 #define VISION_VERSION "1.02"
 #define MIN_WEB_DATE 20260901
+#define POST_MAX_SIZE (4u * 1024u * 1024u)
 
 static char g_hl[16] = "en";
 static char g_gl[16] = "US";
@@ -24,7 +26,7 @@ static int g_mx_ready;
 
 typedef struct {
     const char *p[12];
-    char s[8][2300];
+    char s[11][2300];
     int n;
 } hdrs_t;
 
@@ -231,7 +233,9 @@ static int post_json(http_t *h, const char *url, json_t *body, hdrs_t *hd, volat
     r.timeout_s = 40;
     r.compress = 1;
     r.cancel = cancel;
-    int rc = http_fetch(h, &r, out, 0, status);
+
+    int rc = http_fetch(h, &r, out, POST_MAX_SIZE, status);
+
     free(payload);
     if (out->data) harvest_visitor(out->data, yt);
     return rc;
