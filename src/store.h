@@ -1,3 +1,4 @@
+
 #ifndef STORE_H
 #define STORE_H
 
@@ -8,10 +9,12 @@
 #define DL_DIR DATA_DIR "/downloads"
 
 void store_init(void);
+
 int store_fav_count(void);
 int store_fav_get(int i, track_t *t);
 int store_is_fav(const char *id);
 int store_fav_toggle(const track_t *t);
+
 int store_hist_count(void);
 int store_hist_get(int i, track_t *t);
 void store_hist_push(const track_t *t);
@@ -25,6 +28,9 @@ enum {
 
 int store_opt(int id);
 void store_opt_set(int id, int v);
+
+void store_proxy_get(int *enabled, char *host, size_t cap, int *port);
+void store_proxy_set(int enabled, const char *host, int port);
 
 int store_pl_count(void);
 int store_pl_name(int pl, char *out, size_t cap);
