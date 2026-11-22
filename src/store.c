@@ -1,3 +1,4 @@
+
 #include "store.h"
 
 #include <jansson.h>
@@ -47,6 +48,11 @@ static dl_item_t *g_dl;
 static int g_dln;
 static volatile int g_opt[OPT_COUNT] = {1, 1};
 static mutex_t g_mx;
+
+/* Proxy settings */
+static int g_proxy_enabled = 1;
+static char g_proxy_host[64] = "10.181.117.17";
+static int g_proxy_port = 8080;
 
 static json_t *track_to_json(const track_t *t) {
     return json_pack("{s:s,s:s,s:s,s:s,s:s,s:i}", "id", t->id, "title", t->title, "artist", t->artist, "album",
@@ -232,7 +238,14 @@ static const char *const OPT_KEYS[OPT_COUNT] = {"hints", "radio"};
 
 static void opt_save(void) {
     json_t *o = json_object();
-    for (int i = 0; i < OPT_COUNT; i++) json_object_set_new(o, OPT_KEYS[i], json_boolean(g_opt[i]));
+
+    for (int i = 0; i < OPT_COUNT; i++)
+        json_object_set_new(o, OPT_KEYS[i], json_boolean(g_opt[i]));
+
+    json_object_set_new(o, "proxy_enabled", json_boolean(g_proxy_enabled));
+    json_object_set_new(o, "proxy_host", json_string(g_proxy_host));
+    json_object_set_new(o, "proxy_port", json_integer(g_proxy_port));
+
     json_dump_file(o, OPT_PATH, JSON_COMPACT);
     json_decref(o);
 }
@@ -241,10 +254,30 @@ static void opt_load(void) {
     json_error_t e;
     json_t *o = json_load_file(OPT_PATH, 0, &e);
     if (!o) return;
+
     for (int i = 0; i < OPT_COUNT; i++) {
         json_t *v = json_object_get(o, OPT_KEYS[i]);
         if (json_is_boolean(v)) g_opt[i] = json_is_true(v) ? 1 : 0;
     }
+
+    json_t *v;
+
+    v = json_object_get(o, "proxy_enabled");
+    if (json_is_boolean(v))
+        g_proxy_enabled = json_is_true(v) ? 1 : 0;
+
+    v = json_object_get(o, "proxy_host");
+    const char *host = json_string_value(v);
+    if (host && host[0])
+        str_set(g_proxy_host, sizeof g_proxy_host, host);
+
+    v = json_object_get(o, "proxy_port");
+    if (json_is_integer(v)) {
+        json_int_t port = json_integer_value(v);
+        if (port >= 1 && port <= 65535)
+            g_proxy_port = (int)port;
+    }
+
     json_decref(o);
 }
 
@@ -258,6 +291,39 @@ void store_opt_set(int id, int v) {
     mx_lock(&g_mx);
     g_opt[id] = v ? 1 : 0;
     opt_save();
+    mx_unlock(&g_mx);
+}
+
+/* Read proxy settings */
+void store_proxy_get(int *enabled, char *host, size_t cap, int *port) {
+    mx_lock(&g_mx);
+
+    if (enabled)
+        *enabled = g_proxy_enabled;
+
+    if (host && cap > 0)
+        str_set(host, cap, g_proxy_host);
+
+    if (port)
+        *port = g_proxy_port;
+
+    mx_unlock(&g_mx);
+}
+
+/* Update and save proxy settings */
+void store_proxy_set(int enabled, const char *host, int port) {
+    mx_lock(&g_mx);
+
+    g_proxy_enabled = enabled ? 1 : 0;
+
+    if (host && host[0])
+        str_set(g_proxy_host, sizeof g_proxy_host, host);
+
+    if (port >= 1 && port <= 65535)
+        g_proxy_port = port;
+
+    opt_save();
+
     mx_unlock(&g_mx);
 }
 
