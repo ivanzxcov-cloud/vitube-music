@@ -1,3 +1,4 @@
+
 #ifndef NET_H
 #define NET_H
 
@@ -32,6 +33,7 @@ typedef struct {
 #define HTTP_FAILED (-3)
 
 int net_init(int insecure);
+void net_set_proxy(int enabled, const char *host, int port);
 int net_wifi_connected(void);
 
 http_t *http_new(void);
@@ -41,3 +43,4 @@ int http_fetch(http_t *h, const http_req_t *req, buf_t *out, size_t max_len, lon
 const char *http_last_error(http_t *h);
 
 #endif
+
