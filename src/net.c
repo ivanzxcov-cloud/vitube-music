@@ -1,4 +1,3 @@
-
 #include "net.h"
 
 #include <stdio.h>
@@ -30,6 +29,10 @@ typedef struct {
 static char g_cainfo[160];
 static int g_insecure;
 static int g_net_ready;
+
+static int g_proxy_enabled = 1;
+static char g_proxy_host[64] = "10.181.117.17";
+static int g_proxy_port = 8080;
 
 #define SSL_LOCKS 64
 #define SSL_LOCK_FLAG 1
@@ -104,14 +107,12 @@ static void ssl_locking_cb(int mode, int type, const char *file, int line) {
 static unsigned long ssl_thread_id_cb(void) {
     return (unsigned long)sceKernelGetThreadId();
 }
-
 #endif
 
 static void ssl_threading_init(void) {
     static int done;
     if (done) return;
     done = 1;
-
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     for (int i = 0; i < SSL_LOCKS; i++)
         mx_init(&g_ssl_locks[i], "ytm_ssl");
@@ -130,7 +131,6 @@ int net_init(int insecure) {
     static SceNetInitParam param;
     void *pool = malloc(NET_POOL);
     if (!pool) return -1;
-
     param.memory = pool;
     param.size = NET_POOL;
     param.flags = 0;
@@ -176,6 +176,18 @@ int net_init(int insecure) {
     return 0;
 }
 
+void net_set_proxy(int enabled, const char *host, int port) {
+    g_proxy_enabled = enabled ? 1 : 0;
+
+    if (host && host[0]) {
+        snprintf(g_proxy_host, sizeof g_proxy_host, "%s", host);
+    }
+
+    if (port >= 1 && port <= 65535) {
+        g_proxy_port = port;
+    }
+}
+
 int net_wifi_connected(void) {
     int state = 0;
     if (sceNetCtlInetGetState(&state) < 0) return 0;
@@ -189,7 +201,6 @@ http_t *http_new(void) {
     if (!h) return NULL;
 
     h->c = curl_easy_init();
-
     if (!h->c) {
         free(h);
         return NULL;
@@ -216,7 +227,6 @@ static size_t write_cb(char *p, size_t sz, size_t n, void *ud) {
         w->checked = 1;
         long code = 0;
         curl_easy_getinfo(w->h->c, CURLINFO_RESPONSE_CODE, &code);
-
         if (w->req->range_start > 0 && code == 200) {
             w->aborted = 3;
             return 0;
@@ -284,8 +294,15 @@ int http_run(http_t *h, const http_req_t *req, long *status) {
 
     curl_easy_setopt(c, CURLOPT_URL, req->url);
 
-    curl_easy_setopt(c, CURLOPT_PROXY, "10.181.117.17:8080");
-    curl_easy_setopt(c, CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
+    if (g_proxy_enabled && g_proxy_host[0] && g_proxy_port > 0) {
+        char proxy[96];
+
+        snprintf(proxy, sizeof proxy, "%s:%d",
+            g_proxy_host, g_proxy_port);
+
+        curl_easy_setopt(c, CURLOPT_PROXY, proxy);
+        curl_easy_setopt(c, CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
+    }
 
     curl_easy_setopt(c, CURLOPT_ERRORBUFFER, h->err);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
@@ -326,7 +343,6 @@ int http_run(http_t *h, const http_req_t *req, long *status) {
 
     if (req->range_start >= 0) {
         char range[64];
-
         if (req->range_end >= 0)
             snprintf(range, sizeof range, "%lld-%lld",
                 (long long)req->range_start,
