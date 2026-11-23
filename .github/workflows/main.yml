@@ -1,0 +1,37 @@
+
+name: Build ViTube Music
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build VPK
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            vitasdk/vitasdk:2026.08 \
+            sh -lc '
+              vdpm install curl faad2 libvita2d freetype libpng libjpeg-turbo zlib zstd bzip2 &&
+              cmake -S . -B build &&
+              cmake --build build --parallel 2
+            '
+
+      - name: Upload VPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ViTube-Music-VPK
+          path: build/vitube-music.vpk
+          if-no-files-found: error
+          
