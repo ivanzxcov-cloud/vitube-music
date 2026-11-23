@@ -89,6 +89,9 @@ enum {
 enum {
     ROW_HINTS = 0,
     ROW_RADIO,
+    ROW_PROXY,
+    ROW_PROXY_HOST,
+    ROW_PROXY_PORT,
     ROW_CLEAR_HIST,
     ROW_CLEAR_DL,
     ROW_COUNT
@@ -257,12 +260,16 @@ static int tab_count(int tab) {
         return ROW_COUNT;
     default:
         return store_hist_count();
-    }
-}
-
 static int option_info(int row, char *title, size_t tc, char *sub, size_t sc, int *toggle, int *on) {
     *toggle = 0;
     *on = 0;
+
+    int proxy_enabled = 0;
+    int proxy_port = 8080;
+    char proxy_host[128] = "";
+
+    store_proxy_get(&proxy_enabled, proxy_host, sizeof proxy_host, &proxy_port);
+
     switch (row) {
     case ROW_HINTS:
         str_set(title, tc, "Button hints");
@@ -270,20 +277,41 @@ static int option_info(int row, char *title, size_t tc, char *sub, size_t sc, in
         *toggle = 1;
         *on = store_opt(OPT_HINTS);
         return 1;
+
     case ROW_RADIO:
         str_set(title, tc, "Autoplay similar songs");
         str_set(sub, sc, "Keep playing related songs when the queue runs out");
         *toggle = 1;
         *on = store_opt(OPT_RADIO);
         return 1;
+
+    case ROW_PROXY:
+        str_set(title, tc, "Proxy");
+        str_set(sub, sc, "Route network requests through a proxy");
+        *toggle = 1;
+        *on = proxy_enabled;
+        return 1;
+
+    case ROW_PROXY_HOST:
+        str_set(title, tc, "Proxy address");
+        snprintf(sub, sc, "%s", proxy_host[0] ? proxy_host : "Not set");
+        return 1;
+
+    case ROW_PROXY_PORT:
+        str_set(title, tc, "Proxy port");
+        snprintf(sub, sc, "%d", proxy_port);
+        return 1;
+
     case ROW_CLEAR_HIST:
         str_set(title, tc, "Clear history");
         snprintf(sub, sc, "%d songs in your history", store_hist_count());
         return 1;
+
     case ROW_CLEAR_DL:
         str_set(title, tc, "Delete all downloads");
         snprintf(sub, sc, "%d downloaded songs", store_dl_count());
         return 1;
+
     default:
         return 0;
     }
@@ -700,7 +728,7 @@ static void draw_option_row(int idx, float y, int sel) {
         lim = right - 30.0f;
     }
     float maxw = lim - x - 14.0f;
-    int danger = !toggle;
+    int danger = (idx == ROW_CLEAR_HIST || idx == ROW_CLEAR_DL);
     unsigned tc = danger ? C(255, 110, 120, sel ? 1.0 : 0.88) : C(255, 255, 255, sel ? 1.0 : 0.92);
     tx_fit(x, y + 19.0f, maxw, FS_M, tc, title);
     tx_fit(x, y + 38.0f, maxw, FS_XS, C(255, 255, 255, sel ? 0.66 : 0.50), sub);
@@ -1547,32 +1575,105 @@ static void option_activate(int row) {
     char title[64];
     char sub[96];
     int toggle, on;
+
     if (!option_info(row, title, sizeof title, sub, sizeof sub, &toggle, &on)) return;
+
+    if (row == ROW_PROXY) {
+        int enabled = 0;
+        int port = 8080;
+        char host[128] = "";
+
+        store_proxy_get(&enabled, host, sizeof host, &port);
+
+        enabled = !enabled;
+        store_proxy_set(enabled, host, port);
+        net_set_proxy(enabled, host, port);
+
+        toast("Proxy: %s", enabled ? "On" : "Off");
+        return;
+    }
+
+    if (row == ROW_PROXY_HOST) {
+        int enabled = 0;
+        int port = 8080;
+        char host[128] = "";
+        char edited[128] = "";
+
+        store_proxy_get(&enabled, host, sizeof host, &port);
+
+        if (!ime_run("Proxy address", host, edited, sizeof edited)) return;
+
+        for (int i = 0; edited[i]; i++) {
+            if (edited[i] == ' ' || edited[i] == '\t' ||
+                edited[i] == '\n' || edited[i] == '\r') {
+                toast("Invalid proxy address");
+                return;
+            }
+        }
+
+        store_proxy_set(enabled, edited, port);
+        net_set_proxy(enabled, edited, port);
+        toast("Proxy address saved");
+        return;
+    }
+
+    if (row == ROW_PROXY_PORT) {
+        int enabled = 0;
+        int port = 8080;
+        char host[128] = "";
+        char initial[16];
+        char edited[32];
+
+        store_proxy_get(&enabled, host, sizeof host, &port);
+        snprintf(initial, sizeof initial, "%d", port);
+
+        if (!ime_run("Proxy port", initial, edited, sizeof edited)) return;
+
+        char *end = NULL;
+        long value = strtol(edited, &end, 10);
+
+        if (end == edited || *end != '\0' || value < 1 || value > 65535) {
+            toast("Invalid port");
+            return;
+        }
+
+        store_proxy_set(enabled, host, (int)value);
+        net_set_proxy(enabled, host, (int)value);
+        toast("Proxy port saved");
+        return;
+    }
+
     if (toggle) {
         int id = row == ROW_HINTS ? OPT_HINTS : OPT_RADIO;
         store_opt_set(id, !on);
         toast("%s: %s", title, on ? "Off" : "On");
         return;
     }
+
     char q[96];
+
     if (row == ROW_CLEAR_HIST) {
         if (store_hist_count() == 0) {
             toast("History is already empty");
             return;
         }
+
         snprintf(q, sizeof q, "Clear your history?");
         menu_begin(MENU_CONFIRM, q);
         menu_add("Clear", ACT_HIST_CLEAR_YES, 0);
     } else {
         int n = store_dl_count();
+
         if (n == 0) {
             toast("There are no downloads");
             return;
         }
+
         snprintf(q, sizeof q, "Delete %d downloaded songs?", n);
         menu_begin(MENU_CONFIRM, q);
         menu_add("Delete", ACT_DL_CLEAR_YES, 0);
     }
+
     menu_add("Keep", ACT_CLOSE, 0);
     g_menu.sel = 1;
 }
