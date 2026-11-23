@@ -260,6 +260,8 @@ static int tab_count(int tab) {
         return ROW_COUNT;
     default:
         return store_hist_count();
+            }
+}
 static int option_info(int row, char *title, size_t tc, char *sub, size_t sc, int *toggle, int *on) {
     *toggle = 0;
     *on = 0;
