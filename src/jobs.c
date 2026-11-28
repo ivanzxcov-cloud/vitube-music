@@ -154,7 +154,22 @@ int jobs_search_count(void) {
     mx_unlock(&g_mx);
     return n;
 }
+int jobs_search_current_page(void) {
+    mx_lock(&g_mx);
+    int page = S.current_page;
+    mx_unlock(&g_mx);
+    return page;
+}
 
+int jobs_search_can_next(void) {
+    mx_lock(&g_mx);
+    int page = S.current_page;
+    int can = page + 1 < SEARCH_PAGE_COUNT &&
+        (S.continuation[page + 1][0] != '\0' ||
+         S.page_ready[page + 1]);
+    mx_unlock(&g_mx);
+    return can;
+}
 int jobs_search_get(int i, track_t *t) {
     int ok = 0;
     mx_lock(&g_mx);
