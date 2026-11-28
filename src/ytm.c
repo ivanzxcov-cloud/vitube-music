@@ -426,7 +426,39 @@ static void collect(json_t *n, coll_t *c, int depth) {
         }
     }
 }
+static void find_search_continuation(json_t *n, char *out, size_t cap, int depth) {
+    if (!n || out[0] || depth > 48) return;
 
+    if (json_is_object(n)) {
+        const char *token = jstr(jp(n, "continuationItemRenderer",
+                                    "continuationEndpoint",
+                                    "continuationCommand", "token", NULL));
+
+        if (!token)
+            token = jstr(jp(n, "nextContinuationData", "continuation", NULL));
+
+        if (token && token[0]) {
+            str_set(out, cap, token);
+            return;
+        }
+
+        const char *key;
+        json_t *value;
+
+        json_object_foreach(n, key, value) {
+            find_search_continuation(value, out, cap, depth + 1);
+            if (out[0]) return;
+        }
+    } else if (json_is_array(n)) {
+        size_t i;
+        json_t *value;
+
+        json_array_foreach(n, i, value) {
+            find_search_continuation(value, out, cap, depth + 1);
+            if (out[0]) return;
+        }
+    }
+}
 static void web_headers(hdrs_t *hd) {
     char vd[2048];
     vd_get(vd, sizeof vd);
