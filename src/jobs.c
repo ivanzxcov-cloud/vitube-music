@@ -10,7 +10,11 @@
 #include "player.h"
 #include "ytm.h"
 
+
 #define RADIO_MAX 40
+#define SEARCH_PAGE_SIZE 20
+#define SEARCH_PAGE_COUNT 20
+#define SEARCH_TOKEN_MAX 2048
 #define ART_MAX_BYTES (512 * 1024)
 
 static mutex_t g_mx;
@@ -22,9 +26,21 @@ static struct {
     int gen;
     int busy;
     int n;
+
+    int requested_page;
+    int current_page;
+    int request_id;
+
+    int page_ready[SEARCH_PAGE_COUNT];
+    int page_count[SEARCH_PAGE_COUNT];
+
+    char continuation[SEARCH_PAGE_COUNT][SEARCH_TOKEN_MAX];
+
+    track_t pages[SEARCH_PAGE_COUNT][SEARCH_PAGE_SIZE];
+    track_t items[SEARCH_PAGE_SIZE];
+
     char query[160];
     char err[128];
-    track_t items[SEARCH_MAX];
 } S;
 
 static struct {
@@ -48,12 +64,80 @@ static SceUID g_th_art;
 
 void jobs_search(const char *query) {
     mx_lock(&g_mx);
+
     S.gen++;
+    S.request_id++;
     S.busy = 1;
     S.n = 0;
+    S.requested_page = 0;
+    S.current_page = 0;
     S.err[0] = '\0';
+
+    memset(S.page_ready, 0, sizeof S.page_ready);
+    memset(S.page_count, 0, sizeof S.page_count);
+    memset(S.continuation, 0, sizeof S.continuation);
+
     str_set(S.query, sizeof S.query, query);
     S.req_pending = 1;
+
+    mx_unlock(&g_mx);
+}
+
+void jobs_search_page(int page) {
+    if (page < 0 || page >= SEARCH_PAGE_COUNT) return;
+
+    mx_lock(&g_mx);
+
+    if (page > 0 && !S.continuation[page][0] && !S.page_ready[page]) {
+        S.err[0] = '\0';
+        str_set(S.err, sizeof S.err, "Next page unavailable");
+        mx_unlock(&g_mx);
+        return;
+    }
+
+    S.request_id++;
+    S.requested_page = page;
+
+    if (S.page_ready[page]) {
+        S.n = S.page_count[page];
+        S.current_page = page;
+
+        memcpy(S.items, S.pages[page],
+               sizeof(track_t) * (size_t)S.n);
+
+        S.busy = 0;
+        S.err[0] = '\0';
+    } else {
+        S.busy = 1;
+        S.err[0] = '\0';
+        S.req_pending = 1;
+    }
+
+    mx_unlock(&g_mx);
+}
+void jobs_search_page(int page) {
+    if (page < 0 || page >= SEARCH_PAGE_COUNT) return;
+
+    mx_lock(&g_mx);
+
+    S.requested_page = page;
+    S.request_id++;
+
+    if (S.page_ready[page]) {
+        S.n = S.page_count[page];
+        S.current_page = page;
+
+        memcpy(S.items, S.pages[page],
+               sizeof(track_t) * (size_t)S.n);
+
+        S.busy = 0;
+        S.err[0] = '\0';
+    } else {
+        S.busy = 1;
+        S.err[0] = '\0';
+        S.req_pending = 1;
+    }
+
     mx_unlock(&g_mx);
 }
 
@@ -126,23 +210,69 @@ int jobs_art_take(char *id, uint8_t **data, size_t *len) {
     return ok;
 }
 
-static void run_search(http_t *h, const char *query, int gen) {
-    track_t *tmp = malloc(sizeof(track_t) * SEARCH_MAX);
+static void run_search(http_t *h, const char *query, int gen,
+                       int page, int request_id, const char *continuation) {
+    track_t *tmp = malloc(sizeof(track_t) * SEARCH_PAGE_SIZE);
     char err[128] = "";
+    char next[SEARCH_TOKEN_MAX] = "";
+
     int n = -1;
-    if (tmp) n = ytm_search(h, query, tmp, SEARCH_MAX, &g_never_cancel, err, sizeof err);
+
+    if (tmp) {
+        n = ytm_search_page(
+            h,
+            query,
+            continuation,
+            tmp,
+            SEARCH_PAGE_SIZE,
+            next,
+            sizeof next,
+            &g_never_cancel,
+            err,
+            sizeof err
+        );
+    } else {
+        str_set(err, sizeof err, "Out of memory");
+    }
+
     mx_lock(&g_mx);
-    if (gen == S.gen) {
-        if (n > 0) {
-            memcpy(S.items, tmp, sizeof(track_t) * (size_t)n);
+
+    if (gen == S.gen && request_id == S.request_id) {
+        if (n >= 0) {
+            if (n > SEARCH_PAGE_SIZE) n = SEARCH_PAGE_SIZE;
+
+            S.page_ready[page] = 1;
+            S.page_count[page] = n;
+
+            if (n > 0) {
+                memcpy(S.pages[page], tmp, sizeof(track_t) * (size_t)n);
+                memcpy(S.items, tmp, sizeof(track_t) * (size_t)n);
+            }
+
             S.n = n;
+            S.current_page = page;
+
+            if (page + 1 < SEARCH_PAGE_COUNT) {
+                str_set(S.continuation[page + 1],
+                        sizeof S.continuation[page + 1], next);
+            }
+
+            if (n == 0) {
+                str_set(S.err, sizeof S.err,
+                        page == 0 ? "No results" : "No more results");
+            } else {
+                S.err[0] = '\0';
+            }
         } else {
-            S.n = 0;
-            str_set(S.err, sizeof S.err, err[0] ? err : "Search failed");
+            str_set(S.err, sizeof S.err,
+                    err[0] ? err : "Search failed");
         }
+
         S.busy = 0;
     }
+
     mx_unlock(&g_mx);
+
     free(tmp);
 }
 
@@ -163,34 +293,62 @@ static void run_radio(http_t *h, const char *id) {
 static int main_worker(SceSize args, void *argp) {
     (void)args;
     (void)argp;
+
     http_t *h = http_new();
+
     if (!h) {
         log_msg("jobs: http_new failed");
         return 0;
     }
+
     while (!g_quit) {
         char query[160];
         char rid[16];
+        char continuation[SEARCH_TOKEN_MAX] = "";
+
         int gen = 0;
+        int page = 0;
+        int request_id = 0;
+
         int do_search = 0;
         int do_radio = 0;
+
         mx_lock(&g_mx);
+
         if (S.req_pending) {
             S.req_pending = 0;
+
             gen = S.gen;
+            page = S.requested_page;
+            request_id = S.request_id;
+
             str_set(query, sizeof query, S.query);
+
+            if (page > 0) {
+                str_set(continuation, sizeof continuation,
+                        S.continuation[page]);
+            }
+
             do_search = 1;
         } else if (R.pending) {
             R.pending = 0;
             R.busy = 1;
+
             str_set(rid, sizeof rid, R.id);
             do_radio = 1;
         }
+
         mx_unlock(&g_mx);
-        if (do_search) run_search(h, query, gen);
-        else if (do_radio) run_radio(h, rid);
-        else sleep_ms(30);
+
+        if (do_search) {
+            run_search(h, query, gen, page, request_id, continuation);
+        } else if (do_radio) {
+            run_radio(h, rid);
+        } else {
+            sleep_ms(30);
+        }
     }
+
     http_free(h);
     return 0;
 }
