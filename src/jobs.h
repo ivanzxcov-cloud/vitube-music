@@ -12,6 +12,9 @@ void jobs_init(void);
 void jobs_shutdown(void);
 
 void jobs_search(const char *query);
+void jobs_search_page(int page);
+int jobs_search_current_page(void);
+int jobs_search_can_next(void);
 int jobs_search_busy(void);
 int jobs_search_count(void);
 int jobs_search_get(int i, track_t *t);
