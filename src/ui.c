@@ -1956,8 +1956,29 @@ static void handle_buttons(void) {
         if (!g_tri_fired) toggle_fav_selected();
         g_tri_since = 0;
     }
+    if (g_tab == TAB_SEARCH) {
+    if (pressed(SCE_CTRL_LTRIGGER)) {
+        int page = jobs_search_current_page();
+        if (page > 0) {
+            jobs_search_page(page - 1);
+            g_sel[TAB_SEARCH] = 0;
+            g_top[TAB_SEARCH] = 0;
+        }
+    }
+
+    if (pressed(SCE_CTRL_RTRIGGER)) {
+        if (jobs_search_can_next()) {
+            jobs_search_page(jobs_search_current_page() + 1);
+            g_sel[TAB_SEARCH] = 0;
+            g_top[TAB_SEARCH] = 0;
+        } else {
+            toast("No next page");
+        }
+    }
+} else {
     if (pressed(SCE_CTRL_LTRIGGER)) player_prev();
     if (pressed(SCE_CTRL_RTRIGGER)) player_next();
+    }
     if (pressed(SCE_CTRL_LEFT)) switch_tab(-1);
     if (pressed(SCE_CTRL_RIGHT)) switch_tab(1);
 
