@@ -12,6 +12,9 @@
 void ytm_configure(const char *hl, const char *gl);
 
 int ytm_search(http_t *h, const char *query, track_t *out, int max, volatile int *cancel, char *err, size_t errcap);
+int ytm_search_page(http_t *h, const char *query, const char *continuation,
+                    track_t *out, int max, char *next, size_t nextcap,
+                    volatile int *cancel, char *err, size_t errcap);
 int ytm_radio(http_t *h, const char *video_id, track_t *out, int max, volatile int *cancel, char *err, size_t errcap);
 int ytm_hls_master(http_t *h, const char *video_id, char *url, size_t cap, volatile int *cancel, char *err, size_t errcap);
 
