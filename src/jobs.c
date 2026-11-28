@@ -115,31 +115,6 @@ void jobs_search_page(int page) {
 
     mx_unlock(&g_mx);
 }
-void jobs_search_page(int page) {
-    if (page < 0 || page >= SEARCH_PAGE_COUNT) return;
-
-    mx_lock(&g_mx);
-
-    S.requested_page = page;
-    S.request_id++;
-
-    if (S.page_ready[page]) {
-        S.n = S.page_count[page];
-        S.current_page = page;
-
-        memcpy(S.items, S.pages[page],
-               sizeof(track_t) * (size_t)S.n);
-
-        S.busy = 0;
-        S.err[0] = '\0';
-    } else {
-        S.busy = 1;
-        S.err[0] = '\0';
-        S.req_pending = 1;
-    }
-
-    mx_unlock(&g_mx);
-}
 
 int jobs_search_busy(void) {
     mx_lock(&g_mx);
