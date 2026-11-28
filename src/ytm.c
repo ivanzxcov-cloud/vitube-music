@@ -532,7 +532,50 @@ int ytm_search(http_t *h, const char *query, track_t *out, int max, volatile int
     if (n == 0) set_err(err, errcap, "No results");
     return n;
 }
+int ytm_search_page(http_t *h, const char *query, const char *continuation,
+                    track_t *out, int max, char *next, size_t nextcap,
+                    volatile int *cancel, char *err, size_t errcap) {
+    if (!h || !out || max <= 0 || !next || nextcap == 0) {
+        set_err(err, errcap, "Invalid search arguments");
+        return -1;
+    }
 
+    next[0] = '\0';
+
+    json_t *body = json_object();
+
+    if (continuation && continuation[0]) {
+        json_object_set_new(body, "continuation",
+                            json_string(continuation));
+    } else {
+        json_object_set_new(body, "query", json_string(query));
+        json_object_set_new(body, "params",
+                            json_string(SEARCH_PARAMS_SONGS));
+    }
+
+    json_t *root = NULL;
+
+    int rc = music_call(h, "search", body, cancel,
+                        &root, err, errcap);
+
+    if (rc < 0) return rc;
+
+    coll_t c = {out, 0, max, 0};
+    collect(root, &c, 0);
+
+    find_search_continuation(root, next, nextcap, 0);
+
+    json_decref(root);
+
+    log_msg("search page: %d songs, continuation=%s",
+            c.n, next[0] ? "yes" : "no");
+
+    if (c.n == 0 && (!continuation || !continuation[0])) {
+        set_err(err, errcap, "No results");
+    }
+
+    return c.n;
+}
 int ytm_radio(http_t *h, const char *video_id, track_t *out, int max, volatile int *cancel, char *err, size_t errcap) {
     char pl[40];
     snprintf(pl, sizeof pl, "RDAMVM%s", video_id);
